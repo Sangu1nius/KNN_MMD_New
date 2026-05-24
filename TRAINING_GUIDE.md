@@ -635,7 +635,7 @@ for tid in 0 1 2 3 4 5 6 7 8 9; do
     mv action.txt action_id${tid}.txt
 done
 
-# === 阶段 5: 汇总 ===
+# === 阶段 5: 汇总 =
 # (用 §4.2 的脚本汇总平均精度)
 ```
 
