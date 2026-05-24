@@ -11,6 +11,9 @@ import argparse
 from model import Resnet,Linear
 from sklearn.model_selection import train_test_split
 from func import mk_mmd_loss
+from torch.utils.tensorboard import SummaryWriter
+from datetime import datetime
+import os
 
 support_mmd=False
 global_mmd=True
@@ -325,6 +328,20 @@ def main():
     device_name = "cuda:"+args.cuda
     device = torch.device(device_name if torch.cuda.is_available() and not args.cpu else 'cpu')
     task=args.task
+
+    run_name = "{}_test{}_k{}_p{}_{}".format(
+        args.task,
+        "-".join(map(str, args.test_list)),
+        args.k, args.p,
+        datetime.now().strftime("%Y%m%d_%H%M%S"),
+    )
+    log_dir = os.path.join("./runs", run_name)
+    writer = SummaryWriter(log_dir=log_dir)
+    print("[TensorBoard] log dir:", log_dir)
+    print("[TensorBoard] start UI with:  tensorboard --logdir ./runs --port 6006")
+    writer.add_text("config/args", str(vars(args)))
+    writer.add_text("config/device", str(device))
+
     if task == "action":
         class_num = 6
         train_data,_=load_zero_shot(test_people_list=args.test_list+['2'], data_path=args.data_path, task=task)
@@ -370,6 +387,7 @@ def main():
     parameters = set(model.parameters()) | set(classifier.parameters())
     total_params = sum(p.numel() for p in parameters if p.requires_grad)
     print('total parameters:', total_params)
+    writer.add_scalar("config/total_params", total_params, 0)
     optim = torch.optim.Adam(parameters, lr=args.lr, weight_decay=0.01)
 
     best_acc = 0
@@ -386,6 +404,8 @@ def main():
         print(log)
         with open(args.task + ".txt", 'a') as file:
             file.write(log)
+        writer.add_scalar("loss/train", loss, j)
+        writer.add_scalar("acc/train", acc, j)
 
         loss, acc = iteration(model, classifier, optim, train_loader, support_loader, None, None, device, task=task, train=False)
         # loss, acc = iteration(model, classifier, optim, train_loader, my_support_loader, None, None, device, task=task, train=False)
@@ -393,12 +413,16 @@ def main():
         print(log)
         with open(args.task + ".txt", 'a') as file:
             file.write(log)
+        writer.add_scalar("loss/valid", loss, j)
+        writer.add_scalar("acc/valid", acc, j)
 
         test_loss, test_acc = iteration(model, classifier, optim, train_loader, test_loader, None, None, device, task=task, train=False)
         log = "Test Loss {:06f}, Test Acc {:06f} ".format(test_loss, test_acc)
         print(log)
         with open(args.task + ".txt", 'a') as file:
             file.write(log + "\n")
+        writer.add_scalar("loss/test", test_loss, j)
+        writer.add_scalar("acc/test", test_acc, j)
 
         if acc >= best_acc or loss <= best_loss:
             torch.save(model.state_dict(), args.task + ".pth")
@@ -419,6 +443,12 @@ def main():
         else:
             loss_epoch += 1
         print("Acc Epoch {:}, Loss Epcoh {:}, Same Epoch {:}".format(acc_epoch, loss_epoch, same_epoch))
+        writer.add_scalar("best/acc", best_acc, j)
+        writer.add_scalar("best/loss", best_loss, j)
+        writer.add_scalar("counters/acc_epoch", acc_epoch, j)
+        writer.add_scalar("counters/loss_epoch", loss_epoch, j)
+        writer.add_scalar("counters/same_epoch", same_epoch, j)
+        writer.flush()
         if (((acc_epoch >= args.epoch and loss_epoch >= args.epoch) or same_epoch >= args.epoch) and j>200) or j>350:
             break
         if j==200:
@@ -427,6 +457,8 @@ def main():
             same_epoch = 0
             best_acc *= 0.8
             best_loss *= 1.2
+
+    writer.close()
 
 
 if __name__ == '__main__':
