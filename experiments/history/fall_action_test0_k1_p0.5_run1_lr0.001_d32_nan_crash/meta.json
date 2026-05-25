@@ -1,0 +1,23 @@
+{
+  "run_name": "fall_action_test0_k1_p0.5_run1_lr0.001_d32_nan_crash",
+  "task": "action",
+  "args": {
+    "task": "action",
+    "test_list": [
+      0
+    ],
+    "k": 1,
+    "n": 1,
+    "p": 0.5,
+    "d": 32,
+    "lr": 0.001,
+    "batch_size": 256,
+    "mode": 1
+  },
+  "best_test_acc": 0.576271,
+  "final_test_acc": 0.118644,
+  "total_epochs": 300,
+  "notes": "首次训练。epoch 277 后梯度爆炸 → loss=NaN。.pth 是 NaN 之前最佳权重。",
+  "migrated_from_legacy": true,
+  "migrated_at": "2026-05-25T20:41:35.578797"
+}

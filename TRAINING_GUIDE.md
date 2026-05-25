@@ -250,9 +250,11 @@ python train_fall.py \
 ```
 **预期**：精度比 1-shot 高 5~10 个点。
 
-**结果保存**：
-- 日志 → `./action.txt`（追加模式，每个 epoch 一行）
-- 权重 → `./action.pth`（最佳 ResNet）+ `./action_cls.pth`（最佳分类头）
+**结果保存**（自动归档，无需手动 mv）：
+- 训练产物 → `./experiments/history/<run_name>/{action.txt, action.pth, action_cls.pth, meta.json}`
+- 若本次 best test acc 超过现有 best → 自动复制到 `./experiments/best/`
+- TensorBoard → `./runs/<run_name>/`
+- 根目录不会产生任何文件
 
 ### 2.3 任务 ④：WiFall 人员识别
 
@@ -285,7 +287,7 @@ python train_fall.py \
 > 注意：跑 `--task people` 时 `--test_list 0` 表示**目标域是动作 ID=0**（不是人 ID=0）。
 ```
 
-**结果保存**：日志 `./people.txt`，权重 `./people.pth` + `./people_cls.pth`。
+**结果保存**：同任务 ③，自动归档到 `./experiments/history/<run_name>/`，命名为 `people.txt / people.pth / people_cls.pth`。
 
 ### 2.4 任务 ①：WiGesture 手势识别（需先备好 WiGesture 数据）
 
@@ -438,6 +440,8 @@ python train_fall.py ... --batch_size 32 ...
 
 ### 4.1 WiFall 动作识别全员交叉
 
+> **新归档机制下无需手动 mv**：每次训练自动落到 `experiments/history/<run_name>/`，run_name 含时间戳所以不会冲突。
+
 ```bash
 # 用 shell 循环跑 10 次（ID 0~9 各做一次目标域）
 for tid in 0 1 2 3 4 5 6 7 8 9; do
@@ -446,31 +450,34 @@ for tid in 0 1 2 3 4 5 6 7 8 9; do
         --task action \
         --test_list $tid \
         --k 1 --n 1 --p 0.5 \
-        --lr 0.001 --cpu \
+        --lr 0.0005 --cuda 0 \
         > logs_fall_action_id${tid}.log 2>&1
-    # 取这次的最佳测试精度
-    grep "Test Acc" action.txt | tail -1
-    # 把 action.txt 改名保存，避免下次被追加污染
-    mv action.txt action_id${tid}.txt
 done
+
+# 所有 run 自动归档在 experiments/history/，可看：
+ls experiments/history/
 ```
 
 ### 4.2 汇总精度
 
 ```bash
 python <<'EOF'
-import re
-import numpy as np
-accs = []
-for tid in range(10):
-    with open(f'action_id{tid}.txt') as f:
-        text = f.read()
-    test_accs = [float(m.group(1)) for m in re.finditer(r'Test Acc (\d+\.\d+)', text)]
-    if test_accs:
-        best = max(test_accs)
-        print(f'ID {tid}: best test acc = {best:.4f}')
-        accs.append(best)
-print(f'Average: {np.mean(accs):.4f}')
+import json, glob, numpy as np
+results = []
+for meta_path in sorted(glob.glob('experiments/history/*/meta.json')):
+    with open(meta_path) as f:
+        d = json.load(f)
+    # 只取 action 任务、test_list=[<single_id>] 的 run
+    args = d.get('args', {})
+    if d.get('task') == 'action' and len(args.get('test_list', [])) == 1:
+        results.append((args['test_list'][0], d['best_test_acc'], d['run_name']))
+
+# 按 test_list ID 排序
+results.sort(key=lambda x: x[0])
+for tid, acc, name in results:
+    print(f'ID {tid}: best test acc = {acc:.4f}  ({name})')
+if results:
+    print(f'Average: {np.mean([r[1] for r in results]):.4f}')
 EOF
 ```
 
@@ -492,14 +499,87 @@ EOF
 
 ---
 
+## 5.5 实验归档系统说明
+
+每次训练自动归档到 `experiments/` 下，根目录**永远干净**。
+
+### 目录结构
+
+```
+experiments/
+├── history/                                     ← 所有 run 永久归档
+│   ├── fall_action_test0_k1_p0.5_<TIMESTAMP>/
+│   │   ├── action.txt        # 逐 epoch 日志
+│   │   ├── action.pth        # ResNet18 最佳权重
+│   │   ├── action_cls.pth    # MLP 分类头最佳权重
+│   │   └── meta.json         # 含 args / best_test_acc / 时间戳
+│   └── ...
+└── best/                                        ← 全局最佳，自动覆盖
+    ├── action.txt
+    ├── action.pth
+    ├── action_cls.pth
+    └── meta.json
+```
+
+### 自动行为
+
+| 时机 | 行为 |
+|---|---|
+| 训练启动时 | 创建 `experiments/history/<run_name>/`，所有产物从此刻起直接写这里 |
+| 训练过程中 | `action.txt` 追加每 epoch 日志；权重在出现新最佳时覆盖保存 |
+| 训练结束时 | 写 `meta.json`；与 `experiments/best/meta.json` 比较 `best_test_acc` |
+| 本次更优 | 自动复制 4 个文件到 `experiments/best/`，控制台打印 `*** NEW BEST! ***` |
+| 本次不优 | 不覆盖 best/，控制台打印 `not new best (...)` |
+
+### `meta.json` 内容示例
+
+```json
+{
+  "run_name": "fall_action_test0_k1_p0.5_20260524_232033",
+  "task": "action",
+  "args": {"k": 1, "n": 1, "p": 0.5, "d": 32, "lr": 0.0005, ...},
+  "best_test_acc": 0.5763,
+  "final_test_acc": 0.5593,
+  "total_epochs": 231,
+  "timestamp": "2026-05-24T23:35:12.345678",
+  "tensorboard_log_dir": "./runs/fall_action_test0_k1_p0.5_20260524_232033"
+}
+```
+
+### 常用操作
+
+```bash
+# 看当前最佳是哪一次
+cat experiments/best/meta.json | grep -E '"run_name"|"best_test_acc"'
+
+# 列出所有 run 按精度排序
+python <<'EOF'
+import json, glob
+rows = []
+for f in glob.glob('experiments/history/*/meta.json'):
+    d = json.load(open(f))
+    rows.append((d['best_test_acc'], d['run_name']))
+for acc, name in sorted(rows, reverse=True):
+    print(f'{acc:.4f}  {name}')
+EOF
+
+# 用最佳模型推理 → 见 §6.2
+```
+
+---
+
 ## 6. 训练结果分析与可视化
 
-### 6.1 画训练曲线
+> **首选 TensorBoard**（`tensorboard --logdir ./runs`）查看曲线，下面是用 matplotlib 自己画的备选方案。
+
+### 6.1 画训练曲线（指定某次 run）
 ```bash
-python <<'EOF'
+RUN_DIR=experiments/history/fall_action_test0_k1_p0.5_20260524_232033   # 改成你想看的 run
+
+python <<EOF
 import re
 import matplotlib.pyplot as plt
-with open('action.txt') as f:
+with open('${RUN_DIR}/action.txt') as f:
     text = f.read()
 train_acc = [float(m.group(1)) for m in re.finditer(r'Train Acc (\d+\.\d+)', text)]
 valid_acc = [float(m.group(1)) for m in re.finditer(r'Valid Acc (\d+\.\d+)', text)]
@@ -509,12 +589,12 @@ plt.plot(train_acc, label='Train')
 plt.plot(valid_acc, label='Valid (support set)')
 plt.plot(test_acc,  label='Test')
 plt.xlabel('Epoch'); plt.ylabel('Accuracy'); plt.legend(); plt.grid()
-plt.savefig('training_curve.png', dpi=100)
-print('saved training_curve.png')
+plt.savefig('${RUN_DIR}/training_curve.png', dpi=100)
+print('saved to ${RUN_DIR}/training_curve.png')
 EOF
 ```
 
-### 6.2 加载训练好的模型推理
+### 6.2 加载训练好的最佳模型推理
 ```bash
 python <<'EOF'
 import torch
@@ -522,11 +602,13 @@ from model import Resnet, Linear
 from dataset import load_zero_shot
 from torch.utils.data import DataLoader
 
-# 加载权重
+# 直接从 experiments/best/ 加载（全局最佳权重）
+BEST = './experiments/best'
+
 model = Resnet(output_dims=64, channel=1, pretrained=False, norm=True)
 classifier = Linear(input_dims=64, output_dims=5)
-model.load_state_dict(torch.load('action.pth', map_location='cpu'))
-classifier.load_state_dict(torch.load('action_cls.pth', map_location='cpu'))
+model.load_state_dict(torch.load(f'{BEST}/action.pth', map_location='cpu'))
+classifier.load_state_dict(torch.load(f'{BEST}/action_cls.pth', map_location='cpu'))
 model.eval(); classifier.eval()
 
 # 加载目标域测试集
@@ -540,6 +622,21 @@ with torch.no_grad():
         correct += (pred == y).sum().item()
         total += y.size(0)
 print(f'Test Accuracy: {correct/total:.4f}')
+EOF
+```
+
+### 6.3 查看历史所有 run 的精度
+
+```bash
+python <<'EOF'
+import json, glob
+rows = []
+for meta_path in sorted(glob.glob('experiments/history/*/meta.json')):
+    with open(meta_path) as f: d = json.load(f)
+    rows.append((d['best_test_acc'], d['total_epochs'], d['run_name']))
+rows.sort(reverse=True)
+for acc, n, name in rows:
+    print(f'{acc:.4f}  {n:>4}ep  {name}')
 EOF
 ```
 
@@ -581,11 +678,7 @@ A: 检查：
 A: 通常是 npy 文件 dtype 不对。`magnitude_linear.npy` 必须是 `float32`，`action.npy/people.npy` 必须是 `int64`。预处理时已经 `.astype()` 过，正常不会出错。
 
 ### Q7: 想换个目标域 ID 跑
-A: 改 `--test_list <id>` 即可。注意每次跑会**追加**写到 `action.txt`，需要先备份/删除旧的：
-```bash
-mv action.txt action_id0.txt
-python train_fall.py ... --test_list 1 ...
-```
+A: 改 `--test_list <id>` 即可。**新归档机制下不会冲突**——每次训练自动写到 `experiments/history/<run_name>_<timestamp>/`，根目录不再生成任何文件。
 
 ### Q8: 想加速调试，不想等 200 epoch 才早停
 A: 临时编辑 [train.py:422-424](train.py#L422) / [train_fall.py:420-422](train_fall.py#L420)：
@@ -629,14 +722,14 @@ python train_fall.py --task action --test_list 0 --k 1 --p 0.5 --lr 0.001 --cuda
 
 # === 阶段 4: 正式训练（恢复原 e_min=200）===
 # 单 ID 跑通后再做留一交叉验证
+# 新归档机制下不需要手动 mv，每次自动归档到 experiments/history/<run_name>/
 for tid in 0 1 2 3 4 5 6 7 8 9; do
     python train_fall.py --task action --test_list $tid \
-        --k 1 --p 0.5 --lr 0.001 --cuda 0 > logs_id${tid}.log 2>&1
-    mv action.txt action_id${tid}.txt
+        --k 1 --p 0.5 --lr 0.0005 --cuda 0 > logs_id${tid}.log 2>&1
 done
 
-# === 阶段 5: 汇总 =
-# (用 §4.2 的脚本汇总平均精度)
+# === 阶段 5: 汇总 ===
+# 用 §4.2 的脚本读所有 experiments/history/*/meta.json 计算平均
 ```
 
 ---

@@ -1,0 +1,24 @@
+{
+  "run_name": "fall_action_test0_k1_p0.5_run2_rebalanced_lr0.0005_d32",
+  "task": "action",
+  "args": {
+    "task": "action",
+    "test_list": [
+      0
+    ],
+    "k": 1,
+    "n": 1,
+    "p": 0.5,
+    "d": 32,
+    "lr": 0.0005,
+    "batch_size": 256,
+    "mode": 1,
+    "data_note": "rebalanced (fall 降采样)"
+  },
+  "best_test_acc": 0.4,
+  "final_test_acc": 0.285714,
+  "total_epochs": 230,
+  "notes": "尝试全局类平衡后训练。目标域被掏空（Person 0 从 186 样本降到 40）导致 Help Set 太小，效果显著下降。无 .pth 备份。",
+  "migrated_from_legacy": true,
+  "migrated_at": "2026-05-25T20:41:35.579336"
+}

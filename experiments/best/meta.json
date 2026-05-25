@@ -1,0 +1,23 @@
+{
+  "run_name": "fall_action_test0_k1_p0.5_run3_lr0.0005_d32",
+  "task": "action",
+  "args": {
+    "task": "action",
+    "test_list": [
+      0
+    ],
+    "k": 1,
+    "n": 1,
+    "p": 0.5,
+    "d": 32,
+    "lr": 0.0005,
+    "batch_size": 256,
+    "mode": 1
+  },
+  "best_test_acc": 0.576271,
+  "final_test_acc": 0.559322,
+  "total_epochs": 231,
+  "notes": "数据恢复后用 lr=0.0005 重训。训练全程稳定，j=231 早停。当前最佳。",
+  "migrated_from_legacy": true,
+  "migrated_at": "2026-05-25T20:41:35.580003"
+}

@@ -10,3 +10,10 @@ WiFall/WiFall/
 runs/
 *.txt
 !**/README*.txt
+experiments/**/*.pth
+experiments/**/*.txt
+!experiments/**/meta.json
+
+# 数据预处理产物（运行 process*.py 即可重新生成，不入 git）
+*.npy
+*.pkl

@@ -152,6 +152,8 @@ L = L_cls + α₁ · L_MMD^global + α₂ · L_MMD^local
 ```
 KNN-MMD-main/
 ├── README.md                      # 项目说明（论文链接 + 运行示例）
+├── knowledge.md                   # ← 本文档（项目知识手册）
+├── TRAINING_GUIDE.md              # 训练操作指南
 ├── model.py                       # ⭐ 模型定义（ResNet + MLP）
 ├── dataset.py                     # ⭐ 数据加载、跨域划分
 ├── func.py                        # ⭐ MMD/核函数/距离计算工具
@@ -160,19 +162,41 @@ KNN-MMD-main/
 ├── img/                           # 论文示意图
 │   ├── model.png, network.png, layout.png, sketch.png
 ├── WiFall/                        # 自建数据集与预处理
-│   ├── README.md                  # 数据集说明
-│   ├── WiFall.zip                 # 压缩包
-│   ├── WiFall/                    # 解压后的原始 CSV（在 .gitignore）
+│   ├── README.md
+│   ├── WiFall.zip
+│   ├── WiFall/                    # 解压后的原始 CSV
 │   │   └── ID0~ID9/{fall,Jump,sit,stand,walk}/*.csv
 │   └── data_process_example/      # CSV → numpy 预处理脚本
-│       ├── process1.py            # CSV → pkl（提取 magnitude/phase）
-│       ├── process2.py            # pkl → 长序列 npy（保留丢包）
-│       ├── process2-split.py      # pkl → 固定长度 npy（按时间切）
-│       └── process2-squeeze-split.py  # pkl → 固定长度 npy（去丢包）
-└── knowledge.md                   # ← 本文档
+│       ├── process1.py            # ⭐ STEP 1: CSV → pkl
+│       ├── process2-split.py      # ⭐ STEP 2: pkl → 100帧定长 npy
+│       └── process2.py / process2-squeeze-split.py  # 备选预处理
+├── data/                          # 训练用数据（不入 git）
+│   └── fall/
+│       ├── magnitude_linear.npy   # (N,100,52) float32 幅度
+│       ├── phase_linear.npy       # (N,100,52) float32 相位
+│       ├── action.npy             # (N,)       int64   动作标签
+│       └── people.npy             # (N,)       int64   人物标签
+├── runs/                          # TensorBoard 事件文件（一次训练一个子目录）
+│   └── <run_name>/
+└── experiments/                   # ⭐ 训练产物自动归档（核心目录）
+    ├── history/                   # 所有训练历史，永不覆盖
+    │   └── <run_name>/
+    │       ├── action.txt         # 逐 epoch 日志
+    │       ├── action.pth         # ResNet 最佳权重
+    │       ├── action_cls.pth     # MLP 最佳权重
+    │       └── meta.json          # 元信息（超参/精度/时间戳）
+    └── best/                      # 当前最佳，被新最佳自动覆盖
+        ├── action.txt
+        ├── action.pth
+        ├── action_cls.pth
+        └── meta.json
 ```
 
-**主要 import 依赖**：`torch`, `torchvision`, `numpy`, `tqdm`, `umap-learn`, `scikit-learn`, `scipy`, `pandas`。
+**`<run_name>` 命名格式**：`<task>_test<id>_k<shot>_p<topp>_<YYYYMMDD_HHMMSS>`
+- 例：`fall_action_test0_k1_p0.5_20260524_232033`
+- `experiments/history/<run_name>/` 与 `runs/<run_name>/`（TensorBoard）**一一对应**
+
+**主要 import 依赖**：`torch`, `torchvision`, `numpy`, `tqdm`, `umap-learn`, `scikit-learn`, `scipy`, `pandas`, `tensorboard`。
 
 ---
 
@@ -428,9 +452,10 @@ while True:
 │                                                                     │
 │ ┌── main() ──────────────────────────────────────────────────────┐ │
 │ │                                                                │ │
+│ │ 0. 生成 run_name + 创建 experiments/history/<run_name>/         │ │
 │ │ 1. load_zero_shot()  ── 按人/动作切源/目标域                     │ │
 │ │ 2. DataLoader(train_data) ── 源域，batch_size=256               │ │
-│ │ 3. dimension_reducation(test_loader) ── UMAP → 128 维           │ │
+│ │ 3. dimension_reducation(test_loader) ── UMAP → d 维             │ │
 │ │ 4. top_knn() ── KNN 伪标签 + Top-p% Help Set                     │ │
 │ │                                                                │ │
 │ │ ── Step 1 完，得到三个集合：                                     │ │
@@ -447,11 +472,32 @@ while True:
 │ │      └── backward + clip_grad                                  │ │
 │ │      iteration(train=False, support_loader) → 支撑集验证          │ │
 │ │      iteration(train=False, test_loader) → 测试评估              │ │
-│ │      早停检查 + 模型保存                                          │ │
+│ │      → 写日志/权重到 experiments/history/<run_name>/             │ │
+│ │      → 写 TensorBoard 标量到 runs/<run_name>/                   │ │
+│ │      早停检查                                                    │ │
+│ │                                                                │ │
+│ │ 7. 训练结束：                                                    │ │
+│ │   - 写 meta.json (含 best_test_acc / args / 时间戳等)            │ │
+│ │   - 与 experiments/best/meta.json 比较                          │ │
+│ │   - 若本次更优 → 复制 .txt/.pth/meta.json 到 experiments/best/   │ │
 │ │                                                                │ │
 │ └────────────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────────┘
 ```
+
+### 自动归档机制
+
+训练**直接写入** `experiments/history/<run_name>/`，根目录**不再产生**任何工作文件。
+
+| 操作 | 实现位置 |
+|---|---|
+| 训练前创建归档目录 | [train_fall.py:354-358](train_fall.py#L354-L358) / [train.py:354-358](train.py#L354-L358) |
+| 每 epoch 追加日志 | [train_fall.py:392, 400, 408](train_fall.py#L392) |
+| 出现新最佳时保存权重 | [train_fall.py:418-420](train_fall.py#L418-L420) |
+| 训练结束写 meta.json | 训练循环后立即执行 |
+| 与 best/ 比较并条件覆盖 | 同上，控制台会打印 "NEW BEST!" 或 "not new best" |
+
+**触发覆盖 best/ 的条件**：本次 `max(Test Acc)` **严格大于** `experiments/best/meta.json` 中的 `best_test_acc`。平局保留旧的最佳。
 
 ---
 

@@ -14,6 +14,9 @@ from func import mk_mmd_loss
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 import os
+import shutil
+import json
+import re
 
 support_mmd=False
 global_mmd=True
@@ -342,6 +345,13 @@ def main():
     writer.add_text("config/args", str(vars(args)))
     writer.add_text("config/device", str(device))
 
+    archive_dir = os.path.join("./experiments/history", run_name)
+    os.makedirs(archive_dir, exist_ok=True)
+    log_file = os.path.join(archive_dir, args.task + ".txt")
+    model_ckpt = os.path.join(archive_dir, args.task + ".pth")
+    classifier_ckpt = os.path.join(archive_dir, args.task + "_cls.pth")
+    print("[Archive] 训练产物目录:", archive_dir)
+
     if task == "action":
         class_num = 6
         train_data,_=load_zero_shot(test_people_list=args.test_list+['2'], data_path=args.data_path, task=task)
@@ -402,7 +412,7 @@ def main():
         loss, acc = iteration(model, classifier, optim, train_loader, my_support_loader, support_loader, test_loader, device, task=task, train=True)
         log = "Epoch {} | Train Loss {:06f},  Train Acc {:06f} | ".format(j, loss, acc)
         print(log)
-        with open(args.task + ".txt", 'a') as file:
+        with open(log_file, 'a') as file:
             file.write(log)
         writer.add_scalar("loss/train", loss, j)
         writer.add_scalar("acc/train", acc, j)
@@ -411,7 +421,7 @@ def main():
         # loss, acc = iteration(model, classifier, optim, train_loader, my_support_loader, None, None, device, task=task, train=False)
         log = "Valid Loss {:06f}, Valid Acc {:06f} | ".format(loss, acc)
         print(log)
-        with open(args.task + ".txt", 'a') as file:
+        with open(log_file, 'a') as file:
             file.write(log)
         writer.add_scalar("loss/valid", loss, j)
         writer.add_scalar("acc/valid", acc, j)
@@ -419,14 +429,14 @@ def main():
         test_loss, test_acc = iteration(model, classifier, optim, train_loader, test_loader, None, None, device, task=task, train=False)
         log = "Test Loss {:06f}, Test Acc {:06f} ".format(test_loss, test_acc)
         print(log)
-        with open(args.task + ".txt", 'a') as file:
+        with open(log_file, 'a') as file:
             file.write(log + "\n")
         writer.add_scalar("loss/test", test_loss, j)
         writer.add_scalar("acc/test", test_acc, j)
 
         if acc >= best_acc or loss <= best_loss:
-            torch.save(model.state_dict(), args.task + ".pth")
-            torch.save(classifier.state_dict(), args.task + "_cls.pth")
+            torch.save(model.state_dict(), model_ckpt)
+            torch.save(classifier.state_dict(), classifier_ckpt)
         if acc >= best_acc:
             if acc == best_acc:
                 same_epoch+=1
@@ -457,6 +467,58 @@ def main():
             same_epoch = 0
             best_acc *= 0.8
             best_loss *= 1.2
+
+    try:
+        with open(log_file) as f:
+            log_text = f.read()
+        test_accs = [float(m.group(1)) for m in re.finditer(r'Test Acc ([\d.]+)', log_text)]
+        best_test_acc = max(test_accs) if test_accs else 0.0
+        final_test_acc = test_accs[-1] if test_accs else 0.0
+        total_epochs = len(test_accs)
+    except Exception:
+        best_test_acc = 0.0
+        final_test_acc = 0.0
+        total_epochs = 0
+
+    meta = {
+        "run_name": run_name,
+        "task": args.task,
+        "args": {k: (list(v) if isinstance(v, list) else v) for k, v in vars(args).items()},
+        "best_test_acc": best_test_acc,
+        "final_test_acc": final_test_acc,
+        "total_epochs": total_epochs,
+        "timestamp": datetime.now().isoformat(),
+        "tensorboard_log_dir": log_dir,
+    }
+    with open(os.path.join(archive_dir, "meta.json"), "w") as f:
+        json.dump(meta, f, indent=2, default=str, ensure_ascii=False)
+    print("[Archive] {} 归档完成 | best test acc = {:.4f}".format(run_name, best_test_acc))
+
+    best_dir = "./experiments/best"
+    os.makedirs(best_dir, exist_ok=True)
+    best_meta_path = os.path.join(best_dir, "meta.json")
+    existing_best = 0.0
+    existing_run = "(none)"
+    if os.path.exists(best_meta_path):
+        try:
+            with open(best_meta_path) as f:
+                bm = json.load(f)
+                existing_best = bm.get("best_test_acc", 0.0)
+                existing_run = bm.get("run_name", "(none)")
+        except Exception:
+            pass
+
+    if best_test_acc > existing_best:
+        for src_path in [log_file, model_ckpt, classifier_ckpt]:
+            if os.path.exists(src_path):
+                shutil.copy(src_path, best_dir)
+        with open(best_meta_path, "w") as f:
+            json.dump(meta, f, indent=2, default=str, ensure_ascii=False)
+        print("[Archive] *** NEW BEST! *** {:.4f} > {:.4f} (prev: {})".format(
+            best_test_acc, existing_best, existing_run))
+    else:
+        print("[Archive] not new best ({:.4f} <= {:.4f}, current best: {})".format(
+            best_test_acc, existing_best, existing_run))
 
     writer.close()
 
