@@ -1,0 +1,28 @@
+{
+  "run_name": "fall_action_test0_k1_p0.5_20260527_090737",
+  "task": "action",
+  "args": {
+    "batch_size": 256,
+    "hidden_dim": 64,
+    "data_path": "./data/fall",
+    "cpu": false,
+    "cuda": "0",
+    "lr": 0.0005,
+    "test_list": [
+      0
+    ],
+    "epoch": 30,
+    "task": "action",
+    "k": 1,
+    "n": 1,
+    "p": 0.5,
+    "d": 32,
+    "mode": 1,
+    "norm": true
+  },
+  "best_test_acc": 0.542373,
+  "final_test_acc": 0.40678,
+  "total_epochs": 240,
+  "timestamp": "2026-05-27T09:18:12.444028",
+  "tensorboard_log_dir": "./runs/fall_action_test0_k1_p0.5_20260527_090737"
+}
